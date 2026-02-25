@@ -1,26 +1,39 @@
 import time
 import logging
+import subprocess
 from execution.keyboard_controller import KeyboardController
 from execution.mouse_controller import MouseController
+from execution.failsafe_monitor import failsafe
 
 class ActionExecutor:
     def __init__(self, config: dict):
-        exec_config = config.get("execution", {})
+        self.exec_config = config.get("execution", {})
         self.keyboard = KeyboardController(
-            min_delay_ms=exec_config.get("min_type_delay_ms", 30),
-            max_delay_ms=exec_config.get("max_type_delay_ms", 80)
+            min_delay_ms=self.exec_config.get("min_type_delay_ms", 30),
+            max_delay_ms=self.exec_config.get("max_type_delay_ms", 80)
         )
         self.mouse = MouseController(
-            cursor_speed_multiplier=exec_config.get("cursor_speed_multiplier", 1.0),
-            drag_hold_delay_ms=exec_config.get("drag_hold_delay_ms", 150),
-            drag_release_delay_ms=exec_config.get("drag_release_delay_ms", 100)
+            cursor_speed_multiplier=self.exec_config.get("cursor_speed_multiplier", 1.0),
+            drag_hold_delay_ms=self.exec_config.get("drag_hold_delay_ms", 150),
+            drag_release_delay_ms=self.exec_config.get("drag_release_delay_ms", 100)
         )
 
     def execute(self, action_cmd: dict):
         """Dispatches the action command JSON to the correct controller."""
+        failsafe.check()
+        
         action_type = action_cmd.get("action_type")
         coords = action_cmd.get("coordinates")
         params = action_cmd.get("parameters", {})
+        
+        # Resolve target bounding box center if coords aren't explicitly provided
+        if not coords and "target" in params and isinstance(params["target"], dict) and "bbox" in params["target"]:
+            bbox = params["target"]["bbox"]
+            if len(bbox) == 4:
+                coords = {
+                    "x": bbox[0] + (bbox[2] - bbox[0]) / 2,
+                    "y": bbox[1] + (bbox[3] - bbox[1]) / 2
+                }
         
         pre_wait = action_cmd.get("pre_action_wait_ms", 0) / 1000.0
         post_wait = action_cmd.get("post_action_wait_ms", 0) / 1000.0
@@ -32,6 +45,12 @@ class ActionExecutor:
         y = coords.get("y") if coords else None
 
         try:
+            if self.exec_config.get("dry_run", False):
+                logging.info(f"DRY RUN: Executing {action_type} with coords {coords} and params {params}")
+                if post_wait > 0:
+                    time.sleep(post_wait)
+                return
+
             if action_type == "click":
                 self.mouse.click(x, y, button=params.get("button", "left"))
                 
@@ -72,11 +91,31 @@ class ActionExecutor:
             elif action_type == "hotkey":
                 keys = params.get("keys", [])
                 if keys:
+                    hotkey_str = "+".join(keys).lower()
+                    allowed_hotkeys = self.exec_config.get("allowed_hotkeys", [])
+                    unsafe_mode = self.exec_config.get("unsafe_mode", False)
+                    
+                    if not unsafe_mode and allowed_hotkeys and hotkey_str not in allowed_hotkeys:
+                         raise PermissionError(f"Hotkey '{hotkey_str}' blocked by safety policy.")
+                         
                     self.keyboard.hotkey(*keys)
                     
             elif action_type == "wait":
                 wait_time = params.get("duration_ms", 1000) / 1000.0
                 time.sleep(wait_time)
+                
+            elif action_type == "run_command":
+                command = params.get("command", "")
+                unsafe_mode = self.exec_config.get("unsafe_mode", False)
+                allowed_commands = self.exec_config.get("allowed_commands", [])
+                
+                is_allowed = any(command.startswith(cmd) for cmd in allowed_commands)
+                
+                if not unsafe_mode and not is_allowed:
+                    raise PermissionError(f"Command '{command}' blocked by safety policy.")
+                    
+                logging.info(f"Running command: {command}")
+                subprocess.Popen(command, shell=True)
                 
             else:
                 logging.warning(f"Unknown action type: {action_type}")

@@ -69,6 +69,7 @@ class CaptureManager:
     def task_complete(self, session_id: str):
         """Called when a task is finished to clean up all its screens immediately."""
         self.cleanup.clean_session(session_id)
+        self.cleanup.enforce_policy()
         
     def shutdown(self):
         self.cleanup.stop_background_cleanup()

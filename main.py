@@ -6,6 +6,8 @@ import uuid
 import time
 from rich.console import Console
 
+logger = logging.getLogger("ladas")
+
 # LADAS Modules
 from capture.capture_manager import CaptureManager
 from perception.ocr_engine import OCREngine
@@ -37,11 +39,20 @@ class LADAS:
             
         # 2. Setup Logging
         os.makedirs("logs", exist_ok=True)
-        logging.basicConfig(
-            filename=f"logs/ladas_system_{int(time.time())}.log",
-            level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
-        )
+        # Ensure handlers are added once
+        if not logger.hasHandlers():
+            logger.setLevel(logging.INFO)
+            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+            
+            # File Handler
+            fh = logging.FileHandler(f"logs/ladas_system_{int(time.time())}.log")
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
+            
+            # Console Handler (optional, for non-rich debug/info)
+            # ch = logging.StreamHandler()
+            # ch.setFormatter(formatter)
+            # logger.addHandler(ch)
         
         # 3. Initialize Memory
         # (Using a single DB for testing. In prod, you might scope by session)
@@ -64,9 +75,9 @@ class LADAS:
         # For a full implementation, proper paths must be set
         self.llm = LLMClient(model_path=llm_path) 
         
-        self.parser = InstructionParser(self.llm)
-        self.planner = TaskPlanner(self.llm)
-        self.decision = DecisionEngine(self.llm)
+        self.parser = InstructionParser(self.llm, self.config)
+        self.planner = TaskPlanner(self.llm, self.config)
+        self.decision = DecisionEngine(self.llm, self.config)
         
         self.ocr = OCREngine(self.config)
         self.vision = VisionDetector(self.config)
@@ -74,7 +85,33 @@ class LADAS:
         self.executor = ActionExecutor(self.config)
         
         self.session_id = uuid.uuid4().hex[:8]
+        
+        self._validate_startup()
         console.print(f"[green]Initialization Complete. Session: {self.session_id}[/green]")
+
+    def _validate_startup(self):
+        """Validates critical dependencies before starting."""
+        # 1. Check GGUF Model
+        llm_path = self.config.get("reasoning", {}).get("model_path")
+        if not llm_path or not os.path.exists(llm_path):
+            logger.error(f"Critical error: LLM GGUF model not found at {llm_path}")
+            console.print(f"[bold red]Critical error: LLM GGUF model not found at {llm_path}[/bold red]")
+            sys.exit(1)
+            
+        # 2. Check YOLO Model
+        yolo_path = self.config.get("perception", {}).get("vision", {}).get("yolo_model_path", "yolov8n.pt")
+        if not os.path.exists(yolo_path):
+            logger.error(f"Critical error: YOLO model not found at {yolo_path}")
+            console.print(f"[bold red]Critical error: YOLO model not found at {yolo_path}[/bold red]")
+            sys.exit(1)
+            
+        # 3. Check Template Library (Warn only)
+        template_path = self.config.get("perception", {}).get("vision", {}).get("template_library_path")
+        if template_path and not os.path.exists(template_path):
+            logger.warning(f"Template library path not found at {template_path}. Vision matching UI elements might be limited.")
+            console.print(f"[yellow]Warning: Template library not found at {template_path}[/yellow]")
+            
+        logger.info("Startup validation passed successfully.")
 
     def run_terminal_loop(self):
         """The main interactive terminal loop."""
@@ -114,7 +151,7 @@ class LADAS:
         
         # Try-catch blocks mock actual LLM call which might fail without model
         try:
-             intent = self.parser.parse(instruction)
+             intent = self.parser.parse(instruction, self.state)
         except Exception:
              intent = {
                   "task_id": self.state.task_id, 
@@ -129,7 +166,7 @@ class LADAS:
         console.print("[dim cyan]\[PLANNING][/dim cyan] Generating step plan...")
         
         try:
-             plan = self.planner.generate_plan(intent)
+             plan = self.planner.generate_plan(intent, self.state)
         except Exception:
              # Stub plan
              plan = {
@@ -149,6 +186,14 @@ class LADAS:
         print()
             
         # 3. Execution Loop
+        steps = plan.get("steps") or []
+        if not steps:
+            logger.info("Plan contains no steps. Transitioning to TASK_COMPLETE.")
+            console.print("[yellow]Plan contains no steps. Ending task.[/yellow]")
+            self.state.transition_to(FSMState.TASK_COMPLETE)
+            self.task_store.update_task_status(self.state.task_id, self.state.fsm_state.name)
+            return
+
         if not self.state.advance_step():
              return # Empty plan
              
@@ -166,7 +211,12 @@ class LADAS:
                 failsafe.check()
                 
                 step = self.state.get_current_step()
-                console.print(f"[blue]\[EXECUTING][/blue] {step['description']}")
+                if not step:
+                    logger.info("No current step found. Transitioning to TASK_COMPLETE.")
+                    self.state.transition_to(FSMState.TASK_COMPLETE)
+                    break
+                    
+                console.print(f"[blue]\[EXECUTING][/blue] {step.get('description', 'Unknown Step')}")
                 
                 # Capture Screen
                 cap_data = self.capture.capture_screen(self.session_id, self.state.current_step_id)
@@ -178,9 +228,10 @@ class LADAS:
                 if self.capture.check_loop(screen_hash):
                     self.state.repeated_state_count += 1
                     if self.state.repeated_state_count >= self.config.get("state", {}).get("repeated_state_limit", 5):
-                        console.print("[yellow]\[WARNING][/yellow] Infinite loop detected. Aborting step.")
-                        self.state.transition_to(FSMState.STEP_FAILED)
-                        continue
+                        logger.warning(f"Infinite loop detected at step {self.state.current_step_id}. Aborting task.")
+                        console.print("[yellow]\[WARNING][/yellow] Infinite loop detected. Aborting task safely.")
+                        self.state.transition_to(FSMState.TASK_COMPLETE)
+                        break
                 else:
                     self.state.repeated_state_count = 0
                     
@@ -199,7 +250,7 @@ class LADAS:
                 history = self.action_log.get_recent_actions(self.state.task_id)
                 try:
                      action_cmd = self.decision.get_next_action(
-                         step, self.state.current_step_idx, len(self.state.plan["steps"]), screen_state, history)
+                         intent, step, self.state.current_step_idx, len(self.state.plan["steps"]), screen_state, history, self.state)
                 except Exception:
                      # Mock decision for testing if LLM fails
                      action_cmd = {
@@ -230,11 +281,15 @@ class LADAS:
                     # Task completed
                     break
                     
+                # Loop throttling
+                idle_sleep = self.config.get("system", {}).get("loop_idle_sleep_ms", 100) / 1000.0
+                time.sleep(idle_sleep)
+                    
         except FailsafeTriggered:
             self.state.transition_to(FSMState.ABORTED)
             console.print("\n[bold red]\[ABORTED][/bold red] Failsafe triggered by user. Task stopped.")
         except Exception as e:
-            logging.error(f"Task execution failed: {e}")
+            logger.exception(f"Task execution failed: {e}")
             self.state.transition_to(FSMState.FAILED)
             console.print(f"\n[bold red]\[ERROR][/bold red] {e}")
             
