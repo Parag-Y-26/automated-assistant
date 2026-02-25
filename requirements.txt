@@ -1,0 +1,17 @@
+mss>=9.0
+Pillow>=10.0
+easyocr>=1.7
+pytesseract>=0.3
+opencv-python>=4.8
+ultralytics>=8.0
+# llama-cpp-python>=0.2  # Skipped due to C++ build requirements on Windows
+pynput>=1.7
+pyautogui>=0.9
+pydantic>=2.0
+sqlalchemy>=2.0
+chromadb>=0.4
+numpy>=1.24
+torch>=2.0
+PyYAML>=6.0
+imagehash>=4.3
+rich>=13.0

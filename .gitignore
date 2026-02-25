@@ -1,0 +1,21 @@
+# Environments
+venv/
+env/
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Project specific
+logs/
+temp_screens/
+models/
+*.db
+sqlite3.db
+
+# OS
+.DS_Store
+Thumbs.db

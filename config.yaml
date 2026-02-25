@@ -1,0 +1,60 @@
+version: "1.0.0"
+
+system:
+  max_actions_per_minute: 60
+  loop_idle_sleep_ms: 100
+
+capture:
+  monitor_index: 0
+  capture_region: null # e.g., [0, 0, 1920, 1080]
+  max_screenshot_count: 200
+  max_retention_seconds: 3600
+  screenshot_format: "PNG"
+
+perception:
+  ocr:
+    engine: "easyocr" # easyocr or tesseract
+    confidence_threshold: 0.6
+    gpu_enabled: true
+    languages: ["en"]
+    preprocess_image: true
+  vision:
+    yolo_model_path: "yolov8n.pt"
+    confidence_threshold: 0.5
+    nms_threshold: 0.45
+    detection_device: "cpu" # cuda, mps, cpu
+    template_library_path: "perception/templates/"
+
+planning:
+  max_steps: 50
+  max_replan_attempts: 3
+  global_timeout_seconds: 1800 # 30 mins
+
+memory:
+  context_steps_window: 10
+  log_retention_days: 7
+
+state:
+  repeated_state_limit: 5
+  element_wait_timeout: 30 # seconds
+  step_timeout_seconds: 120
+  base_delay: 1.0 # seconds
+  max_delay: 30.0 # seconds
+  max_retries: 5
+  jitter_limit_ms: 500
+
+reasoning:
+  model_path: "models/Phi-3-mini-4k-instruct-q4.gguf"
+  max_llm_calls_per_task: 200
+
+execution:
+  min_type_delay_ms: 30
+  max_type_delay_ms: 80
+  cursor_speed_multiplier: 1.0
+  bezier_control_point_variance: 0.2
+  min_move_duration_ms: 200
+  max_move_duration_ms: 1200
+  click_offset_variance_px: 3
+  drag_hold_delay_ms: 150
+  drag_release_delay_ms: 100
+  failsafe_key: "F12"
