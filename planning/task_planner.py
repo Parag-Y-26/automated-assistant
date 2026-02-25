@@ -40,6 +40,7 @@ class TaskPlanner:
         try:
             # Call LLM to generate JSON
             plan_json = self.llm.generate_json(prompt)
+            logger.info(f"Generated plan JSON: {json.dumps(plan_json, indent=2)}")
             # Minimal validation or default injection could happen here
             return plan_json
         except Exception as e:

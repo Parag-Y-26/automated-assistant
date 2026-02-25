@@ -15,7 +15,7 @@ perception:
   ocr:
     engine: "easyocr" # easyocr or tesseract
     confidence_threshold: 0.6
-    gpu_enabled: true
+    gpu_enabled: false
     languages: ["en"]
     preprocess_image: true
   vision:
