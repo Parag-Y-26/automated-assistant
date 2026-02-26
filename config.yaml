@@ -45,7 +45,8 @@ state:
   jitter_limit_ms: 500
 
 reasoning:
-  model_path: "models/Phi-3-mini-4k-instruct-q4.gguf"
+  default_nim_model: "meta/llama-3.1-405b-instruct"
+  vision_model: "nvail-llama3-v-70b-instruct"
   max_llm_calls_per_task: 200
 
 execution:

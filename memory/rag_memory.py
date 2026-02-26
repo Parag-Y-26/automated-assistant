@@ -24,13 +24,22 @@ class RAGMemoryStorage:
             return
             
         try:
+            import os
+            from openai import OpenAI
+            # Set up NVIDIA API client for embeddings
+            self.embed_client = OpenAI(
+                api_key=os.getenv("NVIDIA_API_KEY"),
+                base_url="https://integrate.api.nvidia.com/v1"
+            )
+            self.embed_model = "nvidia/nv-embedqa-e5-v5"
+
             # Persistent local client
             self.client = chromadb.PersistentClient(path=self.db_path)
             # Create or get the trace collection
             self.collection = self.client.get_or_create_collection(name=self._collection_name)
-            logger.info("ChromaDB successfully initialized for RAG Semantic Memory.")
+            logger.info("ChromaDB successfully initialized for RAG Semantic Memory using NVIDIA embeddings.")
         except Exception as e:
-            logger.error(f"Failed to initialize ChromaDB: {e}")
+            logger.error(f"Failed to initialize ChromaDB or OpenAI SDK: {e}")
 
     def store_successful_trace(self, trace_id: str, intent_description: str, execution_trace: List[Dict[str, Any]]):
         """
@@ -45,14 +54,23 @@ class RAGMemoryStorage:
             # Serialize trace actions into a lightweight string
             serialized_trace = json.dumps(execution_trace)
             
-            # The 'document' is the natural language intent which is vector embedded
-            # The 'metadata' stores the literal JSON action execution trace roadmap
+            # Embed the intent description using NVIDIA APIs
+            response = self.embed_client.embeddings.create(
+                input=[intent_description],
+                model=self.embed_model,
+                encoding_format="float",
+                extra_body={"input_type": "passage", "truncate": "NONE"}
+            )
+            embedding = response.data[0].embedding
+            
+            # Upsert into ChromaDB with explicitly generated NVIDIA embeddings
             self.collection.upsert(
                 documents=[intent_description],
+                embeddings=[embedding],
                 metadatas=[{"trace_data": serialized_trace}],
                 ids=[trace_id]
             )
-            logger.info(f"Successfully embedded trace {trace_id} into RAG Memory.")
+            logger.info(f"Successfully embedded trace {trace_id} into RAG Memory using NVIDIA nim.")
             
         except Exception as e:
             logger.error(f"Failed to upsert trace into RAG database: {e}")
@@ -67,8 +85,17 @@ class RAGMemoryStorage:
              return []
              
         try:
+             # Embed incoming query using NVIDIA API
+             response = self.embed_client.embeddings.create(
+                 input=[current_intent],
+                 model=self.embed_model,
+                 encoding_format="float",
+                 extra_body={"input_type": "query", "truncate": "NONE"}
+             )
+             query_embedding = response.data[0].embedding
+             
              results = self.collection.query(
-                 query_texts=[current_intent],
+                 query_embeddings=[query_embedding],
                  n_results=top_k
              )
              
