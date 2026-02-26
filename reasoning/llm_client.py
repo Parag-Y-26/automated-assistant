@@ -46,26 +46,8 @@ class LLMClient:
              result = response.json()
              text = result.get("message", {}).get("content", "")
              
-             # Extract json by taking the first { and the last }
-             start = text.find('{')
-             end = text.rfind('}')
-             if start != -1 and end != -1 and start < end:
-                 json_str = text[start:end+1]
-                 json_str = re.sub(r',\s*\}', '}', json_str)
-                 json_str = re.sub(r',\s*\]', ']', json_str)
-                 try:
-                     return json.loads(json_str)
-                 except json.JSONDecodeError as e:
-                     for i in range(end - 1, start, -1):
-                         if text[i] == '}':
-                             try:
-                                 return json.loads(text[start:i+1])
-                             except json.JSONDecodeError:
-                                 continue
-                     raise ValueError(f"Extracted json string was invalid: {e}\nRaw extracted string was:\n{json_str}")
-             
-             logging.error(f"RAW OLLAMA OUTPUT (No JSON found): {repr(text)}")
-             raise ValueError("Could not extract JSON from LLM response.")
+             # Securely parse the resulting JSON string directly; no regex manipulation needed
+             return json.loads(text)
              
         except Exception as e:
              logging.error("LLM JSON generation failed: %s", e)

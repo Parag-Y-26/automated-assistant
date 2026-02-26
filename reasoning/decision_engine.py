@@ -17,25 +17,8 @@ class DecisionEngine:
         with open(template_path, 'r') as f:
             self.system_prompt = f.read()
 
-    def parse_action(self, raw_output: str) -> dict:
-        action = {}
-        try:
-            # We first try to find {} if there's trailing garbage
-            start = raw_output.find('{')
-            end = raw_output.rfind('}')
-            if start != -1 and end != -1 and start < end:
-                clean_json = raw_output[start:end+1]
-                # fix trailing commas
-                import re
-                clean_json = re.sub(r',\s*\}', '}', clean_json)
-                clean_json = re.sub(r',\s*\]', ']', clean_json)
-                action = json.loads(clean_json)
-            else:
-                action = json.loads(raw_output)
-        except json.JSONDecodeError as e:
-            logger.warning("LLM produced invalid JSON (%s). Raw output: %r", e, raw_output)
-            raise ValueError(f"Invalid JSON: {e}")
-
+    def parse_action(self, action: dict) -> dict:
+        # Validate action object schema only, string manipulation is delegated entirely upstream
         if not isinstance(action, dict):
             logger.warning("LLM action is not a JSON object. Parsed: %r", action)
             raise ValueError("Invalid action schema: root must be an object")
@@ -107,8 +90,9 @@ class DecisionEngine:
             state.llm_call_count += 1
             
             try:
-                raw_text = self.llm.generate_text(prompt)
-                return self.parse_action(raw_text)
+                # Use generate_json to natively retrieve a JSON dictionary
+                raw_dict = self.llm.generate_json(prompt)
+                return self.parse_action(raw_dict)
             except Exception as e:
                 logger.exception("LLM generation or parsing failed during decision.")
                 reasks += 1

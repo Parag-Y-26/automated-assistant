@@ -197,12 +197,13 @@ class LADAS:
         # Try-catch blocks mock actual LLM call which might fail without model
         try:
              intent = self.parser.parse(instruction, self.state)
-        except Exception:
-             intent = {
-                  "task_id": self.state.task_id, 
-                  "raw_instruction": instruction,
-                  "parsed_goal": instruction
-             }
+        except Exception as e:
+             # Prevent silent swallowing of parse errors; escalate to immediate abort
+             logger.error(f"Fatal error during instruction parsing: {e}")
+             console.print(f"[bold red]\\[FATAL ERROR][/bold red] Instruction parsing failed: {e}")
+             self.state.transition_to(FSMState.FAILED)
+             self.task_store.update_task_status(self.state.task_id, self.state.fsm_state.name)
+             return
         
         self.task_store.create_task(self.session_id, self.state.task_id, instruction)
         
@@ -212,15 +213,13 @@ class LADAS:
         
         try:
              plan = self.planner.generate_plan(intent, self.state)
-        except Exception:
-             # Stub plan
-             plan = {
-                  "steps": [{
-                       "step_id": "step_1",
-                       "description": "Execute user command",
-                       "max_retries": 1
-                  }]
-             }
+        except Exception as e:
+             # Prevent silent swallowing of plan errors; escalate to immediate abort
+             logger.error(f"Fatal error during plan generation: {e}")
+             console.print(f"[bold red]\\[FATAL ERROR][/bold red] Plan generation failed: {e}")
+             self.state.transition_to(FSMState.FAILED)
+             self.task_store.update_task_status(self.state.task_id, self.state.fsm_state.name)
+             return
              
         self.state.plan = plan
         self.task_store.update_task_plan(self.state.task_id, intent.get("parsed_goal", ""), plan)
@@ -248,6 +247,10 @@ class LADAS:
         try:
             while self.state.fsm_state in [FSMState.EXECUTING, FSMState.VALIDATING, FSMState.RETRYING]:
                 
+                # Prevent FSM state bleed: Auto-resolve RETRYING state back to EXECUTING
+                if self.state.fsm_state == FSMState.RETRYING:
+                    self.state.transition_to(FSMState.EXECUTING)
+                    
                 if time.time() - self.state.task_start_time > global_timeout:
                     self.state.transition_to(FSMState.TIMEOUT)
                     console.print(f"\n[bold red]\[TIMEOUT][/bold red] Global timeout exceeded.")
@@ -363,6 +366,9 @@ class LADAS:
                             break
                     else:
                         console.print(f"[yellow]  └─ Status: ⚠ Action failed. Retrying ({self.state.step_retry_count}/{retry_limit})...[/yellow]")
+                        
+                    # Slow down loop upon exception to prevent CPU and LLM continuous spam loops
+                    time.sleep(1.5)
                     continue
                 
                 # Log Action

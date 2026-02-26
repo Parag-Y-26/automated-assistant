@@ -29,10 +29,12 @@ class ActionExecutor:
             raise ValueError("action_cmd missing required 'action_type' field (string)")
         coords = action_cmd.get("coordinates")
         params = action_cmd.get("parameters", {})
-        if params is None:
-            params = {}
+        
+        # Guard against hallucinated coordinate types/lists and parameter objects
+        if not isinstance(coords, dict):
+            coords = None
         if not isinstance(params, dict):
-            raise ValueError("action_cmd 'parameters' must be a dict")
+            params = {}
         
         # Resolve target bounding box center if coords aren't explicitly provided
         if not coords and "target" in params and isinstance(params["target"], dict) and "bbox" in params["target"]:
